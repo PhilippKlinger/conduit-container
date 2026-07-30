@@ -1,0 +1,32 @@
+.git
+.gitignore
+.dockerignore
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+id_rsa
+id_ed25519
+
+# Runtime data and generated files
+data
+logs
+*.log
+*.jar
+
+# Build output and dependency folders
+build
+dist
+target
+node_modules
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+.history
