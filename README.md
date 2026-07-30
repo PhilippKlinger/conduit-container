@@ -17,7 +17,6 @@ only inside the Compose network.
 - [Quickstart](#quickstart)
 - [Usage](#usage)
 - [Configuration](#configuration)
-- [Django administration](#django-administration)
 - [Security notes](#security-notes)
 - [Validation](#validation)
 
@@ -32,7 +31,10 @@ The frontend and backend are maintained as separate Git repositories and
 included here as submodules. Clone the repository recursively:
 
 ```bash
-git clone --recurse-submodules git@github.com:PhilippKlinger/conduit-container.git
+git clone \
+  --branch feature/server-setup \
+  --recurse-submodules \
+  git@github.com:PhilippKlinger/conduit-container.git
 cd conduit-container
 ```
 
@@ -48,25 +50,14 @@ Create the local environment file:
 cp .env.example .env
 ```
 
-Open `.env`, set unique values for all required blank fields, and configure
-the browser-facing addresses for the target Docker host. For a remote host,
-the relevant formats are:
-
-```dotenv
-API_URL=http://<host-address>:8000/api
-DJANGO_ALLOWED_HOSTS=<host-address>
-DJANGO_CORS_ORIGIN_WHITELIST=<host-address>:8282
-```
-
-`DJANGO_ALLOWED_HOSTS` must not contain a URL scheme or port. The legacy CORS
-middleware expects `host:port` without `http://` or `https://`.
+Open `.env`, set unique values for all required blank fields, and review the
+host-specific values described in [Configuration](#configuration).
 
 Validate the effective configuration and start the complete application:
 
 ```bash
 docker compose config
 docker compose up -d
-docker compose ps
 ```
 
 Open these addresses in a browser:
@@ -80,26 +71,31 @@ Open these addresses in a browser:
 Use the same commands for routine operation on a local Docker host or VPS:
 
 ```bash
-docker compose up -d
 docker compose ps
-docker compose logs --tail 100
+docker compose restart
 docker compose down
 ```
 
+Create a Django administrator after the services are healthy:
+
+```bash
+docker compose exec backend python manage.py createsuperuser
+```
+
+Open `http://<host-address>:8000/admin/` and log in with the created account.
+
 ### Logs
 
-Follow the complete log output or only one service:
+Inspect recent logs, follow one service, or save the current output:
 
 ```bash
-docker compose logs -f
+docker compose logs --tail 100
 docker compose logs -f backend
-```
-
-Save the current logs for later inspection:
-
-```bash
 docker compose logs > conduit-container-logs.txt
 ```
+
+Without a service name, Compose displays logs from all services. Add
+`frontend`, `backend`, or `database` to limit the output.
 
 ### Data persistence
 
@@ -118,8 +114,17 @@ machine requires a separate database backup and restore.
 
 ## Configuration
 
-Copy `.env.example` to `.env`, set the required values, and do not commit the
-resulting file.
+Set the required values in the untracked `.env` file. For a remote host, use
+these formats for the browser-facing addresses:
+
+```dotenv
+API_URL=http://<host-address>:8000/api
+DJANGO_ALLOWED_HOSTS=<host-address>
+DJANGO_CORS_ORIGIN_WHITELIST=<host-address>:8282
+```
+
+`DJANGO_ALLOWED_HOSTS` must not contain a URL scheme or port. The legacy CORS
+middleware expects `host:port` without `http://` or `https://`.
 
 | Variable | Purpose | Default value |
 | --- | --- | --- |
@@ -160,23 +165,6 @@ Changing PostgreSQL credentials after the named volume has already been
 initialized requires a deliberate database credential migration. Editing
 `.env` alone does not update existing database accounts.
 
-## Django administration
-
-Create an administrator after the services are healthy:
-
-```bash
-docker compose exec backend python manage.py createsuperuser
-```
-
-The command prompts for the administrator data and passes the supplied
-password through Django's normal password hashing. Administrator accounts are
-stored in PostgreSQL and remain available while the named database volume is
-retained.
-
-Open `http://<host-address>:8000/admin/` and log in with the created account.
-Django static files are collected while building the backend image and served
-through WhiteNoise.
-
 ## Security notes
 
 - Keep `.env`, SSH keys, passwords, tokens, usernames, host addresses,
@@ -189,14 +177,7 @@ through WhiteNoise.
 
 ## Validation
 
-Inspect the service state and application logs:
-
-```bash
-docker compose ps
-docker compose logs --tail 100 backend frontend database
-```
-
-The expected state is:
+Use the status and log commands from [Usage](#usage). The expected state is:
 
 - the database is `healthy`;
 - the backend logs show successful migrations and Gunicorn listening on port
