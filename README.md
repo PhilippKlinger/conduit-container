@@ -114,17 +114,18 @@ machine requires a separate database backup and restore.
 
 ## Configuration
 
-Set the required values in the untracked `.env` file. For a remote host, use
-these formats for the browser-facing addresses:
+Set the required values in the untracked `.env` file. `PUBLIC_HOST` is the
+single place where the externally reachable address is configured:
 
 ```dotenv
-API_URL=http://<host-address>:8000/api
-DJANGO_ALLOWED_HOSTS=<host-address>
-DJANGO_CORS_ORIGIN_WHITELIST=<host-address>:8282
+PUBLIC_HOST=<host-address>
 ```
 
-`DJANGO_ALLOWED_HOSTS` must not contain a URL scheme or port. The legacy CORS
-middleware expects `host:port` without `http://` or `https://`.
+Use `localhost` for a local run. Enter the host or IP only, without a URL
+scheme and without a port. Compose derives three values from it: the API URL
+compiled into the frontend bundle, Django's `ALLOWED_HOSTS`, and the whitelist
+for the legacy CORS middleware, which expects `host:port` without `http://`
+or `https://`.
 
 | Variable | Purpose | Default value |
 | --- | --- | --- |
@@ -132,23 +133,21 @@ middleware expects `host:port` without `http://` or `https://`.
 | `NGINX_IMAGE` | Nginx image used to serve the compiled frontend. | `nginx:1.28.3-alpine` |
 | `PYTHON_IMAGE` | Python image compatible with the legacy Django backend. | `python:3.6-slim` |
 | `POSTGRES_IMAGE` | PostgreSQL database image. | `postgres:16.14-alpine` |
+| `PUBLIC_HOST` | Host or IP the browser uses to reach this deployment. The API URL, `ALLOWED_HOSTS`, and the CORS whitelist derive from it. | `localhost` |
 | `FRONTEND_PORT` | Published frontend host port. | `8282` |
 | `BACKEND_PORT` | Published backend host port. | `8000` |
-| `API_URL` | Public API base URL used by the browser, including `/api`. | Required; no default |
 | `DJANGO_SECRET_KEY` | Unique Django cryptographic signing key. | Required; no default |
 | `DJANGO_DEBUG` | Enables Django debug mode. Keep disabled outside local diagnosis. | `False` |
-| `DJANGO_ALLOWED_HOSTS` | Comma-separated hosts accepted by Django, without schemes or ports. | Required; no default |
-| `DJANGO_CORS_ORIGIN_WHITELIST` | Comma-separated frontend `host:port` values accepted by the legacy CORS middleware. | Required; no default |
 | `POSTGRES_DB` | PostgreSQL database name. | `conduit` |
 | `POSTGRES_USER` | PostgreSQL application user. | Required; no default |
 | `POSTGRES_PASSWORD` | PostgreSQL application password. | Required; no default |
-| `DB_WAIT_TIMEOUT` | Maximum time the backend waits for PostgreSQL. | `60` |
+| `DB_WAIT_TIMEOUT` | Maximum time in seconds the backend waits for PostgreSQL. | `60` |
 | `GUNICORN_WORKERS` | Number of Gunicorn worker processes. | `3` |
 
-`API_URL` is passed to the frontend image as a build argument and compiled
-into the Angular bundle. It must use an address reachable by the browser, not
-the internal Compose service name `backend`. After changing `API_URL`, rebuild
-the frontend:
+`PUBLIC_HOST` becomes part of the API URL that Compose passes to the frontend
+image as a build argument, and Angular compiles that URL into the bundle. It
+must therefore be an address the browser can reach, not the internal Compose
+service name `backend`. After changing it, rebuild the frontend:
 
 ```bash
 docker compose up -d --build frontend
