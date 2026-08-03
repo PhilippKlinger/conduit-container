@@ -10,7 +10,7 @@ services:
         NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.28.3-alpine}
         # Angular bakes this into the bundle, so it must be an address the
         # browser can reach - never the internal service name.
-        API_URL: http://${PUBLIC_HOST:-localhost}:${BACKEND_PORT:-8000}/api
+        API_URL: ${API_URL:-http://localhost:8000/api}
     ports:
       - "${FRONTEND_PORT:-8282}:80"
     depends_on:
@@ -25,20 +25,8 @@ services:
       dockerfile: Dockerfile
       args:
         PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.6-slim}
-    environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
-      # Both derive from PUBLIC_HOST. The legacy CORS middleware expects
-      # host:port entries without a scheme.
-      DJANGO_ALLOWED_HOSTS: ${PUBLIC_HOST:-localhost},localhost,127.0.0.1
-      DJANGO_CORS_ORIGIN_WHITELIST: ${PUBLIC_HOST:-localhost}:${FRONTEND_PORT:-8282},localhost:${FRONTEND_PORT:-8282},127.0.0.1:${FRONTEND_PORT:-8282}
-      POSTGRES_DB: ${POSTGRES_DB:-conduit}
-      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      POSTGRES_HOST: database
-      POSTGRES_PORT: 5432
-      DB_WAIT_TIMEOUT: ${DB_WAIT_TIMEOUT:-60}
-      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+    env_file:
+      - .env.backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:

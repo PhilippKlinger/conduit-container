@@ -2,11 +2,13 @@
 .env
 .env.*
 !.env.example
+!.env.backend.example
 *.pem
 *.key
 
 # Logs and runtime output
 *.log
+*-logs.txt
 logs/
 *.pid
 

@@ -44,14 +44,16 @@ For an existing clone without initialized submodules, run:
 git submodule update --init --recursive
 ```
 
-Create the local environment file:
+Create the local environment files:
 
 ```bash
 cp .env.example .env
+cp .env.backend.example .env.backend
 ```
 
-Open `.env`, set unique values for all required blank fields, and review the
-host-specific values described in [Configuration](#configuration).
+Open `.env` and `.env.backend`, set unique values for all required blank
+fields, and review the host-specific values described in
+[Configuration](#configuration).
 
 Validate the effective configuration and start the complete application:
 
@@ -114,18 +116,22 @@ machine requires a separate database backup and restore.
 
 ## Configuration
 
-Set the required values in the untracked `.env` file. `PUBLIC_HOST` is the
-single place where the externally reachable address is configured:
+Set the required values in the untracked `.env` and `.env.backend` files.
+`.env` contains Compose and build values plus shared PostgreSQL credentials;
+`.env.backend` contains the complete backend runtime configuration:
 
 ```dotenv
-PUBLIC_HOST=<host-address>
+# .env
+API_URL=http://<host-address>:8000/api
+
+# .env.backend
+DJANGO_ALLOWED_HOSTS=<host-address>,localhost,127.0.0.1
+DJANGO_CORS_ORIGIN_WHITELIST=<host-address>:8282,localhost:8282,127.0.0.1:8282
 ```
 
-Use `localhost` for a local run. Enter the host or IP only, without a URL
-scheme and without a port. Compose derives three values from it: the API URL
-compiled into the frontend bundle, Django's `ALLOWED_HOSTS`, and the whitelist
-for the legacy CORS middleware, which expects `host:port` without `http://`
-or `https://`.
+Use `localhost` for a local run. `API_URL` must be an address the browser can
+reach, not the internal Compose service name `backend`. The legacy CORS
+middleware expects `host:port` entries without `http://` or `https://`.
 
 | Variable | Purpose | Default value |
 | --- | --- | --- |
@@ -133,28 +139,30 @@ or `https://`.
 | `NGINX_IMAGE` | Nginx image used to serve the compiled frontend. | `nginx:1.28.3-alpine` |
 | `PYTHON_IMAGE` | Python image compatible with the legacy Django backend. | `python:3.6-slim` |
 | `POSTGRES_IMAGE` | PostgreSQL database image. | `postgres:16.14-alpine` |
-| `PUBLIC_HOST` | Host or IP the browser uses to reach this deployment. The API URL, `ALLOWED_HOSTS`, and the CORS whitelist derive from it. | `localhost` |
+| `API_URL` | Browser-reachable backend API URL compiled into Angular. | `http://localhost:8000/api` |
 | `FRONTEND_PORT` | Published frontend host port. | `8282` |
 | `BACKEND_PORT` | Published backend host port. | `8000` |
 | `DJANGO_SECRET_KEY` | Unique Django cryptographic signing key. | Required; no default |
 | `DJANGO_DEBUG` | Enables Django debug mode. Keep disabled outside local diagnosis. | `False` |
+| `DJANGO_ALLOWED_HOSTS` | Comma-separated hosts accepted by Django. | `localhost,127.0.0.1,[::1]` |
+| `DJANGO_CORS_ORIGIN_WHITELIST` | Comma-separated browser origins accepted by the legacy CORS middleware, without a URL scheme. | `localhost:8282,127.0.0.1:8282` |
 | `POSTGRES_DB` | PostgreSQL database name. | `conduit` |
 | `POSTGRES_USER` | PostgreSQL application user. | Required; no default |
 | `POSTGRES_PASSWORD` | PostgreSQL application password. | Required; no default |
+| `POSTGRES_HOST` | Internal PostgreSQL service host. | `database` |
+| `POSTGRES_PORT` | Internal PostgreSQL service port. | `5432` |
 | `DB_WAIT_TIMEOUT` | Maximum time in seconds the backend waits for PostgreSQL. | `60` |
 | `GUNICORN_WORKERS` | Number of Gunicorn worker processes. | `3` |
 
-`PUBLIC_HOST` becomes part of the API URL that Compose passes to the frontend
-image as a build argument, and Angular compiles that URL into the bundle. It
-must therefore be an address the browser can reach, not the internal Compose
-service name `backend`. After changing it, rebuild the frontend:
+`API_URL` is passed to the frontend image as a build argument and compiled into
+the Angular bundle. After changing it, rebuild the frontend:
 
 ```bash
 docker compose up -d --build frontend
 ```
 
-The backend reads its Django and database values when its container starts.
-Recreate the backend after changing those values:
+The backend reads its Django and database values from `.env.backend` when its
+container starts. Recreate the backend after changing those values:
 
 ```bash
 docker compose up -d --force-recreate backend
@@ -166,8 +174,9 @@ initialized requires a deliberate database credential migration. Editing
 
 ## Security notes
 
-- Keep `.env`, SSH keys, passwords, tokens, usernames, host addresses,
-  database exports, and logs containing sensitive data out of version control.
+- Keep `.env`, `.env.backend`, SSH keys, passwords, tokens, usernames, host
+  addresses, database exports, and logs containing sensitive data out of
+  version control.
 - Use unique secrets and database credentials for every environment.
 - Keep `DJANGO_DEBUG=False` outside local diagnosis.
 - PostgreSQL has no published host port and remains inside the Compose
