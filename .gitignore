@@ -1,0 +1,51 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.backend.example
+*.pem
+*.key
+
+# Logs and runtime output
+*.log
+*-logs.txt
+logs/
+*.pid
+
+# Node / Angular
+node_modules/
+dist/
+.angular/
+.cache/
+coverage/
+
+# Python / Django
+__pycache__/
+*.py[cod]
+*.sqlite3
+db.sqlite3
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+staticfiles/
+conduit-container-logs.txt
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Local Docker overrides and exported data
+compose.override.yaml
+docker-compose.override.yaml
+*.tar
+*.tar.gz

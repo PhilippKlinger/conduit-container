@@ -1,0 +1,64 @@
+name: conduit
+
+services:
+  frontend:
+    build:
+      context: ./conduit-frontend
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-alpine}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.28.3-alpine}
+        # Angular bakes this into the bundle, so it must be an address the
+        # browser can reach - never the internal service name.
+        API_URL: ${API_URL:-http://localhost:8000/api}
+    ports:
+      - "${FRONTEND_PORT:-8282}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - conduit
+
+  backend:
+    build:
+      context: ./conduit-backend
+      dockerfile: Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.6-slim}
+    env_file:
+      - .env.backend
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - conduit
+
+  database:
+    image: ${POSTGRES_IMAGE:-postgres:16.14-alpine}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-conduit}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - database_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - conduit
+
+networks:
+  conduit:
+    driver: bridge
+
+volumes:
+  database_data:
