@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-validation:
+    name: Validate repository structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Verify required project files
+        run: |
+          set -Eeuo pipefail
+
+          test -f docker-compose.yaml
+          test -f conduit-frontend/Dockerfile
+          test -f conduit-frontend/.dockerignore
+          test -f conduit-frontend/package-lock.json
+          test -f conduit-backend/Dockerfile
+          test -f conduit-backend/.dockerignore
+          test -f conduit-backend/requirements.txt
