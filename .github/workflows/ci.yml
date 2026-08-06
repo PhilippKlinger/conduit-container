@@ -45,6 +45,7 @@ jobs:
     name: Build Angular frontend
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Start only after the required project files have been confirmed.
     needs: repository-validation
 
     steps:
@@ -64,12 +65,15 @@ jobs:
 
       - name: Install locked frontend dependencies
         working-directory: conduit-frontend
+        # npm ci uses the exact versions recorded in package-lock.json.
         run: npm ci
 
       - name: Build frontend for production
         working-directory: conduit-frontend
+        # This checks the Angular application before it is build as an image.
         run: npm run build -- --configuration production
 
+  # Frontend and backend image builds are independent and can run in parallel.
   backend-image-build:
     name: Build backend image
     runs-on: ubuntu-latest
@@ -87,4 +91,27 @@ jobs:
       - name: Build backend image outside the VPS
         run: |
           set -Eeuo pipefail
+          # The commit SHA connects this temporary image to its source revision.
           docker build --tag "conduit-backend:ci-${GITHUB_SHA}" ./conduit-backend
+
+  frontend-image-build:
+    name: Build frontend image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - repository-validation
+      - frontend-build
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Build frontend image outside the VPS
+        run: |
+          set -Eeuo pipefail
+          # Build on the runner, and use the SHA to keep the image traceable.
+          docker build --tag "conduit-frontend:ci-${GITHUB_SHA}" ./conduit-frontend
