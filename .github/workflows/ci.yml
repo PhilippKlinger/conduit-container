@@ -40,3 +40,32 @@ jobs:
           test -f conduit-backend/Dockerfile
           test -f conduit-backend/.dockerignore
           test -f conduit-backend/requirements.txt
+
+  frontend-build:
+    name: Build Angular frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: repository-validation
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: conduit-frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        working-directory: conduit-frontend
+        run: npm ci
+
+      - name: Build frontend for production
+        working-directory: conduit-frontend
+        run: npm run build -- --configuration production
