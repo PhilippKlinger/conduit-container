@@ -69,3 +69,22 @@ jobs:
       - name: Build frontend for production
         working-directory: conduit-frontend
         run: npm run build -- --configuration production
+
+  backend-image-build:
+    name: Build backend image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: repository-validation
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Build backend image outside the VPS
+        run: |
+          set -Eeuo pipefail
+          docker build --tag "conduit-backend:ci-${GITHUB_SHA}" ./conduit-backend
