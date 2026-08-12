@@ -1,10 +1,10 @@
 name: Deployment
 
 on:
-  push:
-    branches:
-      - feature/conduit-deployment
-      - main
+  workflow_call:
+    secrets:
+      SUBMODULE_TOKEN:
+        required: true
 
 permissions:
   contents: read
@@ -35,4 +35,3 @@ jobs:
           test -f docker-compose.yaml
           test -f conduit-frontend/Dockerfile
           test -f conduit-backend/Dockerfile
-

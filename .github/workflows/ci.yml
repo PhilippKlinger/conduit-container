@@ -115,3 +115,15 @@ jobs:
           set -Eeuo pipefail
           # Build on the runner, and use the SHA to keep the image traceable.
           docker build --tag "conduit-frontend:ci-${GITHUB_SHA}" ./conduit-frontend
+
+  deployment-validation:
+    name: Run deployment validation
+    if: github.event_name == 'push'
+    needs:
+      - repository-validation
+      - frontend-build
+      - backend-image-build
+      - frontend-image-build
+    uses: ./.github/workflows/deployment.yml
+    secrets:
+      SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
