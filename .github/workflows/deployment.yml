@@ -1,0 +1,38 @@
+name: Deployment
+
+on:
+  push:
+    branches:
+      - feature/conduit-deployment
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deployment-validation:
+    name: Validate deployment prerequisites
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Verify files required by the deployment workflow
+        run: |
+          set -Eeuo pipefail
+
+          test -f .github/workflows/deployment.yml
+          test -f docker-compose.yaml
+          test -f conduit-frontend/Dockerfile
+          test -f conduit-backend/Dockerfile
+
