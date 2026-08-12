@@ -2,6 +2,16 @@ name: Deployment
 
 on:
   workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      frontend_image:
+        required: true
+        type: string
+      backend_image:
+        required: true
+        type: string
     secrets:
       SUBMODULE_TOKEN:
         required: true
@@ -35,3 +45,18 @@ jobs:
           test -f docker-compose.yaml
           test -f conduit-frontend/Dockerfile
           test -f conduit-backend/Dockerfile
+
+      - name: Verify immutable image references
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+        run: |
+          set -Eeuo pipefail
+
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${FRONTEND_IMAGE}" =~ ^ghcr\.io/[a-z0-9._/-]+/conduit-frontend:${SOURCE_SHA}@sha256:[0-9a-f]{64}$ ]]
+          [[ "${BACKEND_IMAGE}" =~ ^ghcr\.io/[a-z0-9._/-]+/conduit-backend:${SOURCE_SHA}@sha256:[0-9a-f]{64}$ ]]
+
+          echo "Validated frontend image: ${FRONTEND_IMAGE}"
+          echo "Validated backend image: ${BACKEND_IMAGE}"

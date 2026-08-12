@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "feature/**"
+      - main
   pull_request:
     branches:
       - main
@@ -79,6 +80,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: repository-validation
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
 
     steps:
       - name: Check out repository and submodules
@@ -88,11 +94,41 @@ jobs:
           token: ${{ secrets.SUBMODULE_TOKEN }}
           persist-credentials: false
 
-      - name: Build backend image outside the VPS
+      - name: Prepare backend image name
+        id: image
+        shell: bash
         run: |
           set -Eeuo pipefail
-          # The commit SHA connects this temporary image to its source revision.
-          docker build --tag "conduit-backend:ci-${GITHUB_SHA}" ./conduit-backend
+
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "name=ghcr.io/${OWNER_LOWER}/conduit-backend:${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GHCR_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build backend image outside the VPS
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+          docker build --tag "${IMAGE}" ./conduit-backend
+
+      - name: Publish backend image and record immutable reference
+        if: github.event_name == 'push'
+        id: publish
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+
+          PUSH_OUTPUT="$(docker push "${IMAGE}")"
+          echo "${PUSH_OUTPUT}"
+          DIGEST="$(awk '/digest: sha256:/ {print $3}' <<< "${PUSH_OUTPUT}" | tail -n 1)"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=${IMAGE}@${DIGEST}" >> "${GITHUB_OUTPUT}"
 
   frontend-image-build:
     name: Build frontend image
@@ -101,6 +137,11 @@ jobs:
     needs:
       - repository-validation
       - frontend-build
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
 
     steps:
       - name: Check out repository and submodules
@@ -110,11 +151,41 @@ jobs:
           token: ${{ secrets.SUBMODULE_TOKEN }}
           persist-credentials: false
 
-      - name: Build frontend image outside the VPS
+      - name: Prepare frontend image name
+        id: image
+        shell: bash
         run: |
           set -Eeuo pipefail
-          # Build on the runner, and use the SHA to keep the image traceable.
-          docker build --tag "conduit-frontend:ci-${GITHUB_SHA}" ./conduit-frontend
+
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "name=ghcr.io/${OWNER_LOWER}/conduit-frontend:${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GHCR_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build frontend image outside the VPS
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+          docker build --tag "${IMAGE}" ./conduit-frontend
+
+      - name: Publish frontend image and record immutable reference
+        if: github.event_name == 'push'
+        id: publish
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+
+          PUSH_OUTPUT="$(docker push "${IMAGE}")"
+          echo "${PUSH_OUTPUT}"
+          DIGEST="$(awk '/digest: sha256:/ {print $3}' <<< "${PUSH_OUTPUT}" | tail -n 1)"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=${IMAGE}@${DIGEST}" >> "${GITHUB_OUTPUT}"
 
   deployment-validation:
     name: Run deployment validation
@@ -125,5 +196,9 @@ jobs:
       - backend-image-build
       - frontend-image-build
     uses: ./.github/workflows/deployment.yml
+    with:
+      source_sha: ${{ github.sha }}
+      frontend_image: ${{ needs.frontend-image-build.outputs.image }}
+      backend_image: ${{ needs.backend-image-build.outputs.image }}
     secrets:
       SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
