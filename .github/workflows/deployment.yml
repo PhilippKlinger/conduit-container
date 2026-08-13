@@ -265,6 +265,71 @@ jobs:
              docker image inspect \"\${FRONTEND_IMAGE}\" > /dev/null
              docker image inspect \"\${BACKEND_IMAGE}\" > /dev/null"
 
+      - name: Validate runtime configuration
+        env:
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          ssh \
+            -T \
+            -i "${SSH_DIRECTORY}/private_key" \
+            -p "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o ConnectionAttempts=1 \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o KbdInteractiveAuthentication=no \
+            -o LogLevel=ERROR \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "set -Eeuo pipefail
+             cd '${DEPLOY_PATH}'
+
+             for ENV_FILE in .env .env.backend; do
+               test -f \"\${ENV_FILE}\" || { echo \"Required runtime file \${ENV_FILE} is missing.\" >&2; exit 1; }
+               test \"\$(stat -c '%u' \"\${ENV_FILE}\")\" = \"\$(id -u)\" || { echo \"Runtime file \${ENV_FILE} is not owned by the deployment user.\" >&2; exit 1; }
+               FILE_MODE=\"\$(stat -c '%a' \"\${ENV_FILE}\")\"
+               (( (8#\${FILE_MODE} & 077) == 0 )) || { echo \"Runtime file \${ENV_FILE} grants group or other permissions.\" >&2; exit 1; }
+             done
+
+             require_env_value() {
+               local ENV_FILE=\"\${1}\"
+               local VARIABLE_NAME=\"\${2}\"
+               awk -v name=\"\${VARIABLE_NAME}\" '
+                 index(\$0, name \"=\") == 1 {
+                   value = substr(\$0, length(name) + 2)
+                   if (value != \"\") found = 1
+                 }
+                 END { exit(found ? 0 : 1) }
+               ' \"\${ENV_FILE}\" || {
+                 echo \"Required variable \${VARIABLE_NAME} is missing or empty in \${ENV_FILE}.\" >&2
+                 exit 1
+               }
+             }
+
+             for VARIABLE_NAME in POSTGRES_USER POSTGRES_PASSWORD; do
+               require_env_value .env \"\${VARIABLE_NAME}\"
+             done
+             for VARIABLE_NAME in DJANGO_SECRET_KEY DJANGO_ALLOWED_HOSTS DJANGO_CORS_ORIGIN_WHITELIST POSTGRES_USER POSTGRES_PASSWORD; do
+               require_env_value .env.backend \"\${VARIABLE_NAME}\"
+             done
+
+             export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
+             export BACKEND_IMAGE='${BACKEND_IMAGE}'
+             docker compose config --quiet
+             RESOLVED_IMAGES=\"\$(docker compose config --images)\"
+             grep -Fqx -- \"\${FRONTEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Frontend image does not match the approved digest.' >&2; exit 1; }
+             grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }"
+
       - name: Remove temporary remote manifest
         if: always()
         env:
