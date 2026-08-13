@@ -107,4 +107,37 @@ jobs:
             echo "::error::DEPLOY_PATH must be an absolute path without whitespace."
             exit 1
           }
-#test
+
+      - name: Configure SSH client
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          install -m 700 -d "${SSH_DIRECTORY}"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${SSH_DIRECTORY}/private_key"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" > "${SSH_DIRECTORY}/known_hosts"
+
+          ssh-keygen -y -f "${SSH_DIRECTORY}/private_key" > /dev/null || {
+            echo "::error::SSH_PRIVATE_KEY is not a valid private key."
+            exit 1
+          }
+
+          KNOWN_HOST_LOOKUP="${SSH_HOST}"
+          if [[ "${SSH_PORT}" != "22" ]]; then
+            KNOWN_HOST_LOOKUP="[${SSH_HOST}]:${SSH_PORT}"
+          fi
+
+          ssh-keygen -F "${KNOWN_HOST_LOOKUP}" -f "${SSH_DIRECTORY}/known_hosts" > /dev/null || {
+            echo "::error::SSH_KNOWN_HOSTS does not contain the configured host and port."
+            exit 1
+          }
+
+      - name: Remove temporary SSH material
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/conduit-deployment-ssh"
