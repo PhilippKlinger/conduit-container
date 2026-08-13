@@ -12,9 +12,6 @@ on:
       backend_image:
         required: true
         type: string
-    secrets:
-      SUBMODULE_TOKEN:
-        required: true
 
 permissions:
   contents: read
@@ -31,22 +28,6 @@ jobs:
     environment: staging
 
     steps:
-      - name: Check out repository and submodules
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          token: ${{ secrets.SUBMODULE_TOKEN }}
-          persist-credentials: false
-
-      - name: Verify files required by the deployment workflow
-        run: |
-          set -Eeuo pipefail
-
-          test -f .github/workflows/deployment.yml
-          test -f docker-compose.yaml
-          test -f conduit-frontend/Dockerfile
-          test -f conduit-backend/Dockerfile
-
       - name: Verify immutable image references
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
@@ -62,24 +43,24 @@ jobs:
           echo "Validated frontend image: ${FRONTEND_IMAGE}"
           echo "Validated backend image: ${BACKEND_IMAGE}"
 
-      - name: Validate SSH deployment configuration
+      - name: Configure SSH client
         env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_USER: ${{ secrets.SSH_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
           set -Eeuo pipefail
 
           for variable_name in \
+            DEPLOY_PATH \
             SSH_HOST \
             SSH_KNOWN_HOSTS \
             SSH_PORT \
             SSH_PRIVATE_KEY \
-            SSH_USER \
-            DEPLOY_PATH 
+            SSH_USER
           do
             if [[ -z "${!variable_name:-}" ]]; then
               echo "::error::Required deployment secret ${variable_name} is missing or empty."
@@ -95,6 +76,9 @@ jobs:
             echo "::error::SSH_PORT must be between 1 and 65535."
             exit 1
           }
+
+          # These values become shell or SSH arguments, so reject characters
+          # that could change command parsing before any network connection.
           [[ "${SSH_HOST}" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || {
             echo "::error::SSH_HOST has an invalid format."
             exit 1
@@ -107,15 +91,6 @@ jobs:
             echo "::error::DEPLOY_PATH must be an absolute path without whitespace."
             exit 1
           }
-
-      - name: Configure SSH client
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          set -Eeuo pipefail
           umask 077
 
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
@@ -137,6 +112,32 @@ jobs:
             echo "::error::SSH_KNOWN_HOSTS does not contain the configured host and port."
             exit 1
           }
+
+      - name: Verify read-only SSH access
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          ssh \
+            -T \
+            -i "${SSH_DIRECTORY}/private_key" \
+            -p "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o ConnectionAttempts=1 \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o KbdInteractiveAuthentication=no \
+            -o LogLevel=ERROR \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "test -d '${DEPLOY_PATH}'"
 
       - name: Remove temporary SSH material
         if: always()

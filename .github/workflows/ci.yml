@@ -46,7 +46,6 @@ jobs:
     name: Build Angular frontend
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Start only after the required project files have been confirmed.
     needs: repository-validation
 
     steps:
@@ -66,12 +65,10 @@ jobs:
 
       - name: Install locked frontend dependencies
         working-directory: conduit-frontend
-        # npm ci uses the exact versions recorded in package-lock.json.
         run: npm ci
 
       - name: Build frontend for production
         working-directory: conduit-frontend
-        # This checks the Angular application before it is build as an image.
         run: npm run build -- --configuration production
 
   # Frontend and backend image builds are independent and can run in parallel.
@@ -200,4 +197,6 @@ jobs:
       source_sha: ${{ github.sha }}
       frontend_image: ${{ needs.frontend-image-build.outputs.image }}
       backend_image: ${{ needs.backend-image-build.outputs.image }}
+    # Environment secrets are not passed automatically to reusable workflows.
+    # The called workflow references only the six staging deployment secrets.
     secrets: inherit
