@@ -211,7 +211,7 @@ jobs:
       - frontend-build
       - backend-image-build
       - frontend-image-build
-    uses: ./.github/workflows/deployment.yaml
+    uses: ./.github/workflows/deployment.yml
     with:
       source_sha: ${{ github.sha }}
       frontend_image: ${{ needs.frontend-image-build.outputs.image }}
