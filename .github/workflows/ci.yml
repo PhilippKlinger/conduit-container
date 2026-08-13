@@ -165,10 +165,27 @@ jobs:
 
       - name: Build frontend image outside the VPS
         env:
+          FRONTEND_API_URL: ${{ secrets.FRONTEND_API_URL }}
           IMAGE: ${{ steps.image.outputs.name }}
         run: |
           set -Eeuo pipefail
-          docker build --tag "${IMAGE}" ./conduit-frontend
+
+          API_URL="${FRONTEND_API_URL:-http://localhost:8000/api}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            [[ -n "${FRONTEND_API_URL}" ]] || {
+              echo "::error::Required repository secret FRONTEND_API_URL is missing or empty."
+              exit 1
+            }
+            [[ "${FRONTEND_API_URL}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?/api/?$ ]] || {
+              echo "::error::FRONTEND_API_URL must be an HTTP(S) URL ending in /api."
+              exit 1
+            }
+          fi
+
+          docker build \
+            --build-arg "API_URL=${API_URL}" \
+            --tag "${IMAGE}" \
+            ./conduit-frontend
 
       - name: Publish frontend image and record immutable reference
         if: github.event_name == 'push'

@@ -173,6 +173,7 @@ jobs:
             "${SSH_USER}@${SSH_HOST}" \
             "set -Eeuo pipefail
              command -v docker > /dev/null || { echo 'Docker is not installed.' >&2; exit 1; }
+             command -v curl > /dev/null || { echo 'curl is not installed.' >&2; exit 1; }
              docker info > /dev/null || { echo 'Docker is not available to the deployment user.' >&2; exit 1; }
              docker compose version > /dev/null || { echo 'Docker Compose is not available.' >&2; exit 1; }
              test -w '${DEPLOY_PATH}' || { echo 'The deployment directory is not writable.' >&2; exit 1; }"
@@ -329,6 +330,70 @@ jobs:
              RESOLVED_IMAGES=\"\$(docker compose config --images)\"
              grep -Fqx -- \"\${FRONTEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Frontend image does not match the approved digest.' >&2; exit 1; }
              grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }"
+
+      - name: Deploy approved Compose stack
+        env:
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          ssh \
+            -T \
+            -i "${SSH_DIRECTORY}/private_key" \
+            -p "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o ConnectionAttempts=1 \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o KbdInteractiveAuthentication=no \
+            -o LogLevel=ERROR \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "set -Eeuo pipefail
+             cd '${DEPLOY_PATH}'
+             export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
+             export BACKEND_IMAGE='${BACKEND_IMAGE}'
+
+             docker compose pull database
+             docker compose up -d --no-build --remove-orphans
+
+             for ATTEMPT in \$(seq 1 30); do
+               FRONTEND_ID=\"\$(docker compose ps -q frontend)\"
+               BACKEND_ID=\"\$(docker compose ps -q backend)\"
+               DATABASE_ID=\"\$(docker compose ps -q database)\"
+
+               if [[ -n \"\${FRONTEND_ID}\" && -n \"\${BACKEND_ID}\" && -n \"\${DATABASE_ID}\" ]] &&
+                  [[ \"\$(docker inspect -f '{{.State.Running}}' \"\${FRONTEND_ID}\")\" == true ]] &&
+                  [[ \"\$(docker inspect -f '{{.State.Running}}' \"\${BACKEND_ID}\")\" == true ]] &&
+                  [[ \"\$(docker inspect -f '{{.State.Health.Status}}' \"\${DATABASE_ID}\")\" == healthy ]]; then
+                 break
+               fi
+
+               if [[ \"\${ATTEMPT}\" == 30 ]]; then
+                 echo 'Services did not reach the expected runtime state within 60 seconds.' >&2
+                 docker compose ps >&2
+                 exit 1
+               fi
+               sleep 2
+             done
+
+             EXPECTED_FRONTEND_ID=\"\$(docker image inspect -f '{{.Id}}' \"\${FRONTEND_IMAGE}\")\"
+             EXPECTED_BACKEND_ID=\"\$(docker image inspect -f '{{.Id}}' \"\${BACKEND_IMAGE}\")\"
+             ACTUAL_FRONTEND_ID=\"\$(docker inspect -f '{{.Image}}' \"\${FRONTEND_ID}\")\"
+             ACTUAL_BACKEND_ID=\"\$(docker inspect -f '{{.Image}}' \"\${BACKEND_ID}\")\"
+             [[ \"\${ACTUAL_FRONTEND_ID}\" == \"\${EXPECTED_FRONTEND_ID}\" ]] || { echo 'Running frontend image does not match the approved digest.' >&2; exit 1; }
+             [[ \"\${ACTUAL_BACKEND_ID}\" == \"\${EXPECTED_BACKEND_ID}\" ]] || { echo 'Running backend image does not match the approved digest.' >&2; exit 1; }
+
+             curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8282/ > /dev/null
+             curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8000/api/articles > /dev/null"
 
       - name: Remove temporary remote manifest
         if: always()
