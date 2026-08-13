@@ -28,6 +28,7 @@ jobs:
     name: Validate deployment prerequisites
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: staging
 
     steps:
       - name: Check out repository and submodules
@@ -60,3 +61,49 @@ jobs:
 
           echo "Validated frontend image: ${FRONTEND_IMAGE}"
           echo "Validated backend image: ${BACKEND_IMAGE}"
+
+      - name: Validate SSH deployment configuration
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          for variable_name in \
+            DEPLOY_PATH \
+            SSH_HOST \
+            SSH_KNOWN_HOSTS \
+            SSH_PORT \
+            SSH_PRIVATE_KEY \
+            SSH_USER
+          do
+            if [[ -z "${!variable_name:-}" ]]; then
+              echo "::error::Required deployment secret ${variable_name} is missing or empty."
+              exit 1
+            fi
+          done
+
+          [[ "${SSH_PORT}" =~ ^[0-9]+$ ]] || {
+            echo "::error::SSH_PORT must be numeric."
+            exit 1
+          }
+          (( SSH_PORT >= 1 && SSH_PORT <= 65535 )) || {
+            echo "::error::SSH_PORT must be between 1 and 65535."
+            exit 1
+          }
+          [[ "${SSH_HOST}" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || {
+            echo "::error::SSH_HOST has an invalid format."
+            exit 1
+          }
+          [[ "${SSH_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]] || {
+            echo "::error::SSH_USER has an invalid format."
+            exit 1
+          }
+          [[ "${DEPLOY_PATH}" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+            echo "::error::DEPLOY_PATH must be an absolute path without whitespace."
+            exit 1
+          }
