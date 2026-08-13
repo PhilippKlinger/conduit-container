@@ -200,5 +200,4 @@ jobs:
       source_sha: ${{ github.sha }}
       frontend_image: ${{ needs.frontend-image-build.outputs.image }}
       backend_image: ${{ needs.backend-image-build.outputs.image }}
-    secrets:
-      SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+    secrets: inherit
