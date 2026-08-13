@@ -18,7 +18,7 @@ permissions:
 
 concurrency:
   group: deployment-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deployment-validation:
@@ -29,7 +29,6 @@ jobs:
 
     steps:
       # Only the parent repository is needed to transfer the Compose manifest.
-      # Application sources and private submodules never reach the VPS.
       - name: Check out deployment manifest
         uses: actions/checkout@v6
         with:
@@ -62,7 +61,7 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          for variable_name in \
+          for VARIABLE_NAME in \
             DEPLOY_PATH \
             SSH_HOST \
             SSH_KNOWN_HOSTS \
@@ -70,8 +69,8 @@ jobs:
             SSH_PRIVATE_KEY \
             SSH_USER
           do
-            if [[ -z "${!variable_name:-}" ]]; then
-              echo "::error::Required deployment secret ${variable_name} is missing or empty."
+            if [[ -z "${!VARIABLE_NAME:-}" ]]; then
+              echo "::error::Required deployment secret ${VARIABLE_NAME} is missing or empty."
               exit 1
             fi
           done
@@ -84,9 +83,6 @@ jobs:
             echo "::error::SSH_PORT must be between 1 and 65535."
             exit 1
           }
-
-          # These values become shell or SSH arguments, so reject characters
-          # that could change command parsing before any network connection.
           [[ "${SSH_HOST}" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || {
             echo "::error::SSH_HOST has an invalid format."
             exit 1
@@ -99,8 +95,8 @@ jobs:
             echo "::error::DEPLOY_PATH must be an absolute path without whitespace."
             exit 1
           }
-          umask 077
 
+          umask 077
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
           install -m 700 -d "${SSH_DIRECTORY}"
           printf '%s\n' "${SSH_PRIVATE_KEY}" > "${SSH_DIRECTORY}/private_key"
@@ -115,183 +111,54 @@ jobs:
           if [[ "${SSH_PORT}" != "22" ]]; then
             KNOWN_HOST_LOOKUP="[${SSH_HOST}]:${SSH_PORT}"
           fi
-
           ssh-keygen -F "${KNOWN_HOST_LOOKUP}" -f "${SSH_DIRECTORY}/known_hosts" > /dev/null || {
             echo "::error::SSH_KNOWN_HOSTS does not contain the configured host and port."
             exit 1
           }
 
-      - name: Verify read-only SSH access
+          cat > "${SSH_DIRECTORY}/config" <<EOF
+          Host conduit-staging
+            HostName ${SSH_HOST}
+            Port ${SSH_PORT}
+            User ${SSH_USER}
+            IdentityFile ${SSH_DIRECTORY}/private_key
+            UserKnownHostsFile ${SSH_DIRECTORY}/known_hosts
+            BatchMode yes
+            ConnectionAttempts 1
+            ConnectTimeout 10
+            IdentitiesOnly yes
+            KbdInteractiveAuthentication no
+            LogLevel ERROR
+            PasswordAuthentication no
+            RequestTTY no
+            StrictHostKeyChecking yes
+          EOF
+          chmod 600 "${SSH_DIRECTORY}/config"
+
+      - name: Verify VPS prerequisites
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -Eeuo pipefail
 
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          ssh \
-            -T \
-            -i "${SSH_DIRECTORY}/private_key" \
-            -p "${SSH_PORT}" \
-            -o BatchMode=yes \
-            -o ConnectionAttempts=1 \
-            -o ConnectTimeout=10 \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o LogLevel=ERROR \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
-            "${SSH_USER}@${SSH_HOST}" \
-            "test -d '${DEPLOY_PATH}'"
-
-      - name: Verify VPS deployment prerequisites
-        env:
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-        run: |
-          set -Eeuo pipefail
-
-          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          ssh \
-            -T \
-            -i "${SSH_DIRECTORY}/private_key" \
-            -p "${SSH_PORT}" \
-            -o BatchMode=yes \
-            -o ConnectionAttempts=1 \
-            -o ConnectTimeout=10 \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o LogLevel=ERROR \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
-            "${SSH_USER}@${SSH_HOST}" \
+          ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
             "set -Eeuo pipefail
+             test -d '${DEPLOY_PATH}' || { echo 'The deployment directory does not exist.' >&2; exit 1; }
+             test -w '${DEPLOY_PATH}' || { echo 'The deployment directory is not writable.' >&2; exit 1; }
              command -v docker > /dev/null || { echo 'Docker is not installed.' >&2; exit 1; }
              command -v curl > /dev/null || { echo 'curl is not installed.' >&2; exit 1; }
              docker info > /dev/null || { echo 'Docker is not available to the deployment user.' >&2; exit 1; }
-             docker compose version > /dev/null || { echo 'Docker Compose is not available.' >&2; exit 1; }
-             test -w '${DEPLOY_PATH}' || { echo 'The deployment directory is not writable.' >&2; exit 1; }"
-
-      - name: Transfer, validate, and activate Compose manifest
-        env:
-          BACKEND_IMAGE: ${{ inputs.backend_image }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-        run: |
-          set -Eeuo pipefail
-
-          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
-
-          scp \
-            -B \
-            -i "${SSH_DIRECTORY}/private_key" \
-            -P "${SSH_PORT}" \
-            -o ConnectionAttempts=1 \
-            -o ConnectTimeout=10 \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o LogLevel=ERROR \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
-            docker-compose.yaml \
-            "${SSH_USER}@${SSH_HOST}:${REMOTE_TEMP_FILE}"
-
-          ssh \
-            -T \
-            -i "${SSH_DIRECTORY}/private_key" \
-            -p "${SSH_PORT}" \
-            -o BatchMode=yes \
-            -o ConnectionAttempts=1 \
-            -o ConnectTimeout=10 \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o LogLevel=ERROR \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
-            "${SSH_USER}@${SSH_HOST}" \
-            "set -Eeuo pipefail
-             cd '${DEPLOY_PATH}'
-             export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
-             export BACKEND_IMAGE='${BACKEND_IMAGE}'
-             export POSTGRES_USER=compose-validation
-             export POSTGRES_PASSWORD=compose-validation
-             docker compose -f '${REMOTE_TEMP_FILE}' config --no-env-resolution --quiet
-             RESOLVED_IMAGES=\"\$(docker compose -f '${REMOTE_TEMP_FILE}' config --no-env-resolution --images)\"
-             grep -Fqx -- \"\${FRONTEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Frontend image does not match the approved digest.' >&2; exit 1; }
-             grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }
-             mv -f -- '${REMOTE_TEMP_FILE}' '${DEPLOY_PATH}/docker-compose.yaml'"
-
-      - name: Pull and verify approved application images
-        env:
-          BACKEND_IMAGE: ${{ inputs.backend_image }}
-          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-        run: |
-          set -Eeuo pipefail
-
-          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          ssh \
-            -T \
-            -i "${SSH_DIRECTORY}/private_key" \
-            -p "${SSH_PORT}" \
-            -o BatchMode=yes \
-            -o ConnectionAttempts=1 \
-            -o ConnectTimeout=10 \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o LogLevel=ERROR \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
-            "${SSH_USER}@${SSH_HOST}" \
-            "set -Eeuo pipefail
-             FRONTEND_IMAGE='${FRONTEND_IMAGE}'
-             BACKEND_IMAGE='${BACKEND_IMAGE}'
-             docker pull \"\${FRONTEND_IMAGE}\"
-             docker pull \"\${BACKEND_IMAGE}\"
-             docker image inspect \"\${FRONTEND_IMAGE}\" > /dev/null
-             docker image inspect \"\${BACKEND_IMAGE}\" > /dev/null"
+             docker compose version > /dev/null || { echo 'Docker Compose is not available.' >&2; exit 1; }"
 
       - name: Validate runtime configuration
         env:
-          BACKEND_IMAGE: ${{ inputs.backend_image }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -Eeuo pipefail
 
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          ssh \
-            -T \
-            -i "${SSH_DIRECTORY}/private_key" \
-            -p "${SSH_PORT}" \
-            -o BatchMode=yes \
-            -o ConnectionAttempts=1 \
-            -o ConnectTimeout=10 \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o LogLevel=ERROR \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
-            "${SSH_USER}@${SSH_HOST}" \
+          ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
             "set -Eeuo pipefail
              cd '${DEPLOY_PATH}'
 
@@ -305,13 +172,7 @@ jobs:
              require_env_value() {
                local ENV_FILE=\"\${1}\"
                local VARIABLE_NAME=\"\${2}\"
-               awk -v name=\"\${VARIABLE_NAME}\" '
-                 index(\$0, name \"=\") == 1 {
-                   value = substr(\$0, length(name) + 2)
-                   if (value != \"\") found = 1
-                 }
-                 END { exit(found ? 0 : 1) }
-               ' \"\${ENV_FILE}\" || {
+               grep -Eq \"^\${VARIABLE_NAME}=.+\" \"\${ENV_FILE}\" || {
                  echo \"Required variable \${VARIABLE_NAME} is missing or empty in \${ENV_FILE}.\" >&2
                  exit 1
                }
@@ -322,14 +183,55 @@ jobs:
              done
              for VARIABLE_NAME in DJANGO_SECRET_KEY DJANGO_ALLOWED_HOSTS DJANGO_CORS_ORIGIN_WHITELIST POSTGRES_USER POSTGRES_PASSWORD; do
                require_env_value .env.backend \"\${VARIABLE_NAME}\"
-             done
+             done"
 
+      - name: Pull approved images
+        env:
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+        run: |
+          set -Eeuo pipefail
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
+            "set -Eeuo pipefail
+             cd '${DEPLOY_PATH}'
              export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
              export BACKEND_IMAGE='${BACKEND_IMAGE}'
-             docker compose config --quiet
-             RESOLVED_IMAGES=\"\$(docker compose config --images)\"
+             docker pull \"\${FRONTEND_IMAGE}\"
+             docker pull \"\${BACKEND_IMAGE}\"
+             docker image inspect \"\${FRONTEND_IMAGE}\" > /dev/null
+             docker image inspect \"\${BACKEND_IMAGE}\" > /dev/null"
+
+      - name: Transfer, validate, and activate Compose manifest
+        env:
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+        run: |
+          set -Eeuo pipefail
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
+
+          scp -F "${SSH_DIRECTORY}/config" -B \
+            docker-compose.yaml \
+            "conduit-staging:${REMOTE_TEMP_FILE}"
+
+          ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
+            "set -Eeuo pipefail
+             cd '${DEPLOY_PATH}'
+             export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
+             export BACKEND_IMAGE='${BACKEND_IMAGE}'
+             export POSTGRES_USER=compose-validation
+             export POSTGRES_PASSWORD=compose-validation
+             docker compose -f '${REMOTE_TEMP_FILE}' config --no-env-resolution --quiet
+             RESOLVED_IMAGES=\"\$(docker compose -f '${REMOTE_TEMP_FILE}' config --no-env-resolution --images)\"
              grep -Fqx -- \"\${FRONTEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Frontend image does not match the approved digest.' >&2; exit 1; }
-             grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }"
+             grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }
+             docker compose -f '${REMOTE_TEMP_FILE}' pull database
+             mv -f -- '${REMOTE_TEMP_FILE}' '${DEPLOY_PATH}/docker-compose.yaml'"
 
       - name: Deploy approved Compose stack
         env:
@@ -337,32 +239,15 @@ jobs:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           FRONTEND_IMAGE: ${{ inputs.frontend_image }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -Eeuo pipefail
 
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          ssh \
-            -T \
-            -i "${SSH_DIRECTORY}/private_key" \
-            -p "${SSH_PORT}" \
-            -o BatchMode=yes \
-            -o ConnectionAttempts=1 \
-            -o ConnectTimeout=10 \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o LogLevel=ERROR \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
-            "${SSH_USER}@${SSH_HOST}" \
+          ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
             "set -Eeuo pipefail
              cd '${DEPLOY_PATH}'
              export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
              export BACKEND_IMAGE='${BACKEND_IMAGE}'
-
-             docker compose pull database
              docker compose up -d --no-build --remove-orphans
 
              for ATTEMPT in \$(seq 1 30); do
@@ -396,31 +281,18 @@ jobs:
 
       - name: Remove temporary remote manifest
         if: always()
+        # A moved manifest is already clean; a lost SSH session must not turn
+        # an otherwise successful rollout into a false deployment failure.
+        continue-on-error: true
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -Eeuo pipefail
 
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          test -f "${SSH_DIRECTORY}/private_key" || exit 0
+          test -f "${SSH_DIRECTORY}/config" || exit 0
           REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
-
-          ssh \
-            -T \
-            -i "${SSH_DIRECTORY}/private_key" \
-            -p "${SSH_PORT}" \
-            -o BatchMode=yes \
-            -o ConnectTimeout=10 \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o LogLevel=ERROR \
-            -o PasswordAuthentication=no \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
-            "${SSH_USER}@${SSH_HOST}" \
+          ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
             "rm -f -- '${REMOTE_TEMP_FILE}'"
 
       - name: Remove temporary SSH material

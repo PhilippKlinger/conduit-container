@@ -203,13 +203,15 @@ jobs:
 
   deployment-validation:
     name: Run deployment validation
-    if: github.event_name == 'push'
+    # The academy deployment target is the protected staging environment.
+    # Main still runs CI, but it must not reuse staging deployment secrets.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/conduit-deployment'
     needs:
       - repository-validation
       - frontend-build
       - backend-image-build
       - frontend-image-build
-    uses: ./.github/workflows/deployment.yml
+    uses: ./.github/workflows/deployment.yaml
     with:
       source_sha: ${{ github.sha }}
       frontend_image: ${{ needs.frontend-image-build.outputs.image }}
