@@ -28,6 +28,14 @@ jobs:
     environment: staging
 
     steps:
+      # Only the parent repository is needed to transfer the Compose manifest.
+      # Application sources and private submodules never reach the VPS.
+      - name: Check out deployment manifest
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: false
+
       - name: Verify immutable image references
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
@@ -167,10 +175,9 @@ jobs:
              command -v docker > /dev/null || { echo 'Docker is not installed.' >&2; exit 1; }
              docker info > /dev/null || { echo 'Docker is not available to the deployment user.' >&2; exit 1; }
              docker compose version > /dev/null || { echo 'Docker Compose is not available.' >&2; exit 1; }
-             test -w '${DEPLOY_PATH}' || { echo 'The deployment directory is not writable.' >&2; exit 1; }
-             test -f '${DEPLOY_PATH}/docker-compose.yaml' || { echo 'docker-compose.yaml is missing from the deployment directory.' >&2; exit 1; }"
+             test -w '${DEPLOY_PATH}' || { echo 'The deployment directory is not writable.' >&2; exit 1; }"
 
-      - name: Verify digest-bound Compose configuration
+      - name: Transfer, validate, and activate Compose manifest
         env:
           BACKEND_IMAGE: ${{ inputs.backend_image }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
@@ -182,6 +189,23 @@ jobs:
           set -Eeuo pipefail
 
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
+
+          scp \
+            -B \
+            -i "${SSH_DIRECTORY}/private_key" \
+            -P "${SSH_PORT}" \
+            -o ConnectionAttempts=1 \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o KbdInteractiveAuthentication=no \
+            -o LogLevel=ERROR \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
+            docker-compose.yaml \
+            "${SSH_USER}@${SSH_HOST}:${REMOTE_TEMP_FILE}"
+
           ssh \
             -T \
             -i "${SSH_DIRECTORY}/private_key" \
@@ -200,12 +224,43 @@ jobs:
              cd '${DEPLOY_PATH}'
              export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
              export BACKEND_IMAGE='${BACKEND_IMAGE}'
-             docker compose config --quiet
-             RESOLVED_IMAGES=\"\$(docker compose config --images)\"
+             export POSTGRES_USER=compose-validation
+             export POSTGRES_PASSWORD=compose-validation
+             docker compose -f '${REMOTE_TEMP_FILE}' config --no-env-resolution --quiet
+             RESOLVED_IMAGES=\"\$(docker compose -f '${REMOTE_TEMP_FILE}' config --no-env-resolution --images)\"
              grep -Fqx -- \"\${FRONTEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Frontend image does not match the approved digest.' >&2; exit 1; }
-             grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }"
+             grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }
+             mv -f -- '${REMOTE_TEMP_FILE}' '${DEPLOY_PATH}/docker-compose.yaml'"
+
+      - name: Remove temporary remote manifest
+        if: always()
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          test -f "${SSH_DIRECTORY}/private_key" || exit 0
+          REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
+
+          ssh \
+            -T \
+            -i "${SSH_DIRECTORY}/private_key" \
+            -p "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o KbdInteractiveAuthentication=no \
+            -o LogLevel=ERROR \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "rm -f -- '${REMOTE_TEMP_FILE}'"
 
       - name: Remove temporary SSH material
         if: always()
         run: rm -rf "${RUNNER_TEMP}/conduit-deployment-ssh"
-#test
