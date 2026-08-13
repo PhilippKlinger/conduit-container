@@ -64,22 +64,22 @@ jobs:
 
       - name: Validate SSH deployment configuration
         env:
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
           set -Eeuo pipefail
 
           for variable_name in \
-            DEPLOY_PATH \
             SSH_HOST \
             SSH_KNOWN_HOSTS \
             SSH_PORT \
             SSH_PRIVATE_KEY \
-            SSH_USER
+            SSH_USER \
+            DEPLOY_PATH 
           do
             if [[ -z "${!variable_name:-}" ]]; then
               echo "::error::Required deployment secret ${variable_name} is missing or empty."
