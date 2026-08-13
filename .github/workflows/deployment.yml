@@ -139,6 +139,72 @@ jobs:
             "${SSH_USER}@${SSH_HOST}" \
             "test -d '${DEPLOY_PATH}'"
 
+      - name: Verify VPS deployment prerequisites
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          ssh \
+            -T \
+            -i "${SSH_DIRECTORY}/private_key" \
+            -p "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o ConnectionAttempts=1 \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o KbdInteractiveAuthentication=no \
+            -o LogLevel=ERROR \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "set -Eeuo pipefail
+             command -v docker > /dev/null || { echo 'Docker is not installed.' >&2; exit 1; }
+             docker info > /dev/null || { echo 'Docker is not available to the deployment user.' >&2; exit 1; }
+             docker compose version > /dev/null || { echo 'Docker Compose is not available.' >&2; exit 1; }
+             test -w '${DEPLOY_PATH}' || { echo 'The deployment directory is not writable.' >&2; exit 1; }
+             test -f '${DEPLOY_PATH}/docker-compose.yaml' || { echo 'docker-compose.yaml is missing from the deployment directory.' >&2; exit 1; }"
+
+      - name: Verify digest-bound Compose configuration
+        env:
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
+          ssh \
+            -T \
+            -i "${SSH_DIRECTORY}/private_key" \
+            -p "${SSH_PORT}" \
+            -o BatchMode=yes \
+            -o ConnectionAttempts=1 \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o KbdInteractiveAuthentication=no \
+            -o LogLevel=ERROR \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${SSH_DIRECTORY}/known_hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "set -Eeuo pipefail
+             cd '${DEPLOY_PATH}'
+             export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
+             export BACKEND_IMAGE='${BACKEND_IMAGE}'
+             docker compose config --quiet
+             RESOLVED_IMAGES=\"\$(docker compose config --images)\"
+             grep -Fqx -- \"\${FRONTEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Frontend image does not match the approved digest.' >&2; exit 1; }
+             grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }"
+
       - name: Remove temporary SSH material
         if: always()
         run: rm -rf "${RUNNER_TEMP}/conduit-deployment-ssh"
