@@ -28,7 +28,7 @@ jobs:
     environment: staging
 
     steps:
-      # Only the parent repository is needed to transfer the Compose manifest.
+      # The deployment workflow needs only this repository's Compose manifest.
       - name: Check out deployment manifest
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

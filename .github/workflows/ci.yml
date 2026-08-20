@@ -211,8 +211,6 @@ jobs:
 
   deployment-validation:
     name: Run deployment validation
-    # The academy deployment target is the protected staging environment.
-    # Main still runs CI, but it must not reuse staging deployment secrets.
     if: github.event_name == 'push' && github.ref == 'refs/heads/feature/conduit-deployment'
     needs:
       - repository-validation
@@ -224,6 +222,5 @@ jobs:
       source_sha: ${{ github.sha }}
       frontend_image: ${{ needs.frontend-image-build.outputs.image }}
       backend_image: ${{ needs.backend-image-build.outputs.image }}
-    # Environment secrets are not passed automatically to reusable workflows.
-    # The called workflow references only the six staging deployment secrets.
+    # The called workflow uses the staging environment for deployment secrets.
     secrets: inherit
