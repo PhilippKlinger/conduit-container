@@ -147,9 +147,9 @@ The main configurable values are:
 | `DB_WAIT_TIMEOUT` | Backend database connection timeout | `60` seconds |
 | `GUNICORN_WORKERS` | Backend worker count | `3` |
 
-`API_URL` is compiled into the frontend bundle. It must be reachable by the
-browser; `backend` is an internal Compose service name and is not valid here.
-Rebuild the frontend after changing it:
+`API_URL` is compiled into the frontend bundle. Use a browser-reachable URL;
+`backend` is an internal Compose service name and is not valid here. Rebuild
+the frontend after changing `API_URL`:
 
 ```bash
 docker compose up -d --build frontend
@@ -163,40 +163,40 @@ docker compose up -d --force-recreate backend
 
 ## CI/CD deployment
 
-The GitHub Actions pipeline separates CI from deployment:
+The pipeline separates CI from deployment:
 
 1. Pushes to `feature/**`, pushes to `main`, and pull requests targeting `main`
    run CI.
-2. CI checks the repository structure, checks out the pinned private
-   submodules, builds the frontend, and builds both application images on
-   GitHub-hosted runners.
-
-3. On a push to `feature/conduit-deployment`, the images are published to GHCR
-   with the source commit as tag and an immutable digest.
+2. CI checks the repository, checks out the pinned submodules, and builds the
+   frontend and backend images on GitHub-hosted runners.
+3. A push to `feature/conduit-deployment` publishes both images to GHCR with the
+   source SHA as tag and an immutable digest.
 4. The reusable deployment workflow validates the image references and connects
-   to the staging VPS through SSH.
-5. The VPS receives `docker-compose.prod.yaml`, pulls the approved images, and
-   starts the stack with `docker compose -f docker-compose.prod.yaml up -d --no-build`.
-   It is then checked for readiness and running image identity.
+   to the staging VPS through strict SSH host-key verification.
+5. It transfers and validates `docker-compose.prod.yaml`, then runs:
 
-The application image builds use separate BuildKit cache scopes for the
-frontend and backend. A cache hit reuses unchanged dependency and build layers;
-a cache miss still performs a normal build. Caches are disposable and may be
-evicted by GitHub, so they do not affect image contents, tags, digests, or
-deployment correctness.
+   ```bash
+   docker compose -f docker-compose.prod.yaml up -d --no-build
+   ```
+
+6. It checks service readiness and the image identity of the running frontend
+   and backend containers.
+
+BuildKit caches use separate scopes for frontend and backend. Cache hits reuse
+unchanged layers; cache misses perform a normal build. Caches are optional and
+do not affect image contents, tags, digests, or deployment correctness.
 
 Local development uses `docker-compose.yaml`, which builds the application
 images from the checked-out submodules. Deployment uses
 `docker-compose.prod.yaml`, which contains runtime image references only and
 does not build application images on the VPS.
 
-`main` runs CI but does not trigger this staging deployment. A production
-environment would require a separate environment, approval model, and secret
-set.
+`main` runs CI but does not trigger this staging deployment. Production would
+require a separate environment, approval model, and secrets.
 
 ### GitHub configuration
 
-Create the following repository secrets:
+Create these repository secrets:
 
 | Secret | Scope | Purpose |
 | --- | --- | --- |
@@ -214,49 +214,43 @@ Create a GitHub Environment named `staging` and add these environment secrets:
 | `SSH_KNOWN_HOSTS` | Verified host-key entry for the VPS |
 | `DEPLOY_PATH` | Absolute Compose project directory on the VPS |
 
-The workflow validates that all required values are present and that host,
-port, user, and deployment path have an expected format. Do not put secret
-values in workflow files, example files, logs, commits, screenshots, or the
-deployment video.
+The workflow validates required values and formats. Never put secret values in
+workflow files, example files, logs, commits, screenshots, or videos.
 
 ### SSH key and VPS setup
 
-Generate the deployment key outside the repository. Install only its public
-key in the deployment user's `~/.ssh/authorized_keys` on the VPS. Store the
-private key as the `SSH_PRIVATE_KEY` secret in the `staging` environment.
+1. Generate the deployment key outside the repository.
+2. Install only the public key in the deployment user's
+   `~/.ssh/authorized_keys` on the VPS.
+3. Store the private key as `SSH_PRIVATE_KEY` in the `staging` environment.
+4. Verify the VPS host-key fingerprint through a trusted channel.
+5. Store the verified entry as `SSH_KNOWN_HOSTS`.
 
-Obtain the VPS host key through a trusted administration channel, verify its
-fingerprint, and store the resulting entry as `SSH_KNOWN_HOSTS`. The workflow
-uses strict host-key checking and does not discover or trust a host key during
-deployment.
+The workflow uses strict host-key checking. It never discovers or trusts a new
+host key during deployment.
 
-The deployment user must be able to:
+The deployment user needs access to `DEPLOY_PATH`, non-interactive Docker and
+Compose access, Docker daemon access, and `curl`.
 
-- access `DEPLOY_PATH` and write its Compose manifest;
-- run Docker and Docker Compose without interactive input;
-- reach the Docker daemon;
-- use `curl` for readiness checks.
-
-Before the first deployment, create `.env` and `.env.backend` in
-`DEPLOY_PATH` on the VPS. They must contain the runtime configuration and be
-owned by the deployment user with no group or other permissions. These files
-remain on the VPS and are never transferred by the workflow.
+Before the first deployment, create `.env` and `.env.backend` in `DEPLOY_PATH`.
+Keep both files owned by the deployment user with no group or other
+permissions. The workflow never transfers these files.
 
 ### Temporary credentials and deployment files
 
-The workflow writes the private key, known-hosts file, and SSH configuration
-only to a restricted directory below `${RUNNER_TEMP}`. Checkout credentials
-are not persisted because every checkout uses `persist-credentials: false`.
+The runner stores SSH material only below `${RUNNER_TEMP}` with restricted
+permissions. Checkout credentials are not persisted.
 
-The production manifest is first copied to a uniquely named temporary file
-below `DEPLOY_PATH`. It is validated against the approved image digests and
-moved to `docker-compose.prod.yaml` only after validation succeeds. Temporary
-remote files and runner-side SSH material are removed in cleanup steps that
-also run after failures.
+Deployment flow:
 
-The VPS pulls the approved GHCR images instead. The current packages are
-publicly pullable, so the VPS does not log in to GHCR; changing package
-visibility requires a separate registry-authentication design.
+1. Copy `docker-compose.prod.yaml` to a uniquely named remote temporary file.
+2. Resolve its image list with `docker compose config --no-env-resolution`.
+3. Compare frontend and backend references with the approved digests.
+4. Move the file to `docker-compose.prod.yaml` only after validation succeeds.
+5. Remove temporary remote files and runner-side SSH material in cleanup steps.
+
+Compose pulls missing public GHCR images during activation. Private packages
+require a separate registry-authentication design.
 
 ## Security
 
@@ -271,8 +265,9 @@ visibility requires a separate registry-authentication design.
   host-key verification.
 - Image references are tied to the source commit and published digest.
 
-Image signing, action commit pinning, build caching, production promotion, and
-automated rollback are not part of the current deployment path.
+Image signing, production promotion, and automated rollback are not part of the
+current deployment path. GitHub Actions are commit-pinned and image builds use
+separate BuildKit caches.
 
 ## Validation
 

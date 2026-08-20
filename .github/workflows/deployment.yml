@@ -185,25 +185,6 @@ jobs:
                require_env_value .env.backend \"\${VARIABLE_NAME}\"
              done"
 
-      - name: Pull approved images
-        env:
-          BACKEND_IMAGE: ${{ inputs.backend_image }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
-        run: |
-          set -Eeuo pipefail
-
-          SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
-            "set -Eeuo pipefail
-             cd '${DEPLOY_PATH}'
-             export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
-             export BACKEND_IMAGE='${BACKEND_IMAGE}'
-             docker pull \"\${FRONTEND_IMAGE}\"
-             docker pull \"\${BACKEND_IMAGE}\"
-             docker image inspect \"\${FRONTEND_IMAGE}\" > /dev/null
-             docker image inspect \"\${BACKEND_IMAGE}\" > /dev/null"
-
       - name: Transfer, validate, and activate Compose manifest
         env:
           BACKEND_IMAGE: ${{ inputs.backend_image }}
@@ -226,11 +207,9 @@ jobs:
              export BACKEND_IMAGE='${BACKEND_IMAGE}'
              export POSTGRES_USER=compose-validation
              export POSTGRES_PASSWORD=compose-validation
-             docker compose -f '${REMOTE_TEMP_FILE}' config --no-env-resolution --quiet
              RESOLVED_IMAGES=\"\$(docker compose -f '${REMOTE_TEMP_FILE}' config --no-env-resolution --images)\"
              grep -Fqx -- \"\${FRONTEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Frontend image does not match the approved digest.' >&2; exit 1; }
              grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }
-             docker compose -f '${REMOTE_TEMP_FILE}' pull database
              mv -f -- '${REMOTE_TEMP_FILE}' '${DEPLOY_PATH}/docker-compose.prod.yaml'"
 
       - name: Deploy approved Compose stack
