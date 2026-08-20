@@ -27,6 +27,9 @@ state.
 
 ## Quickstart
 
+This section covers local development. VPS deployments use the production
+manifest described in [CI/CD deployment](#cicd-deployment).
+
 Requirements:
 
 - Git
@@ -63,6 +66,10 @@ docker compose up -d
 Open the application at `http://<host-address>:8282`.
 
 ## Usage
+
+The commands in this section apply to a local checkout with initialized
+submodules. Do not run `docker compose` without `-f docker-compose.prod.yaml`
+on the VPS.
 
 Check the service state and restart or stop the application with:
 
@@ -191,6 +198,11 @@ images from the checked-out submodules. Deployment uses
 `docker-compose.prod.yaml`, which contains runtime image references only and
 does not build application images on the VPS.
 
+On the VPS, the deployment workflow transfers the production manifest and
+starts approved GHCR images. It does not require a repository checkout or
+`git pull`. Running the default `docker-compose.yaml` there tries to build from
+missing submodule sources.
+
 `main` runs CI but does not trigger this staging deployment. Production would
 require a separate environment, approval model, and secrets.
 
@@ -251,6 +263,27 @@ Deployment flow:
 
 Compose pulls missing public GHCR images during activation. Private packages
 require a separate registry-authentication design.
+
+### Manual VPS recovery
+
+Use this only to recover a stopped deployment. Check the existing containers
+and volume first, then provide the approved image references from a successful
+workflow run:
+
+```bash
+docker ps -a --filter "name=conduit"
+docker volume ls --filter "name=conduit"
+
+export FRONTEND_IMAGE='ghcr.io/<owner>/conduit-frontend:<commit>@sha256:<digest>'
+export BACKEND_IMAGE='ghcr.io/<owner>/conduit-backend:<commit>@sha256:<digest>'
+docker compose -f docker-compose.prod.yaml up -d --no-build
+docker compose -f docker-compose.prod.yaml ps
+```
+
+Re-running the GitHub Actions deployment is preferred for current images. A
+source build on the VPS would require a repository checkout, the correct
+branch, initialized submodules, and `docker-compose.yaml`; it is not the
+standard deployment path.
 
 ## Security
 
