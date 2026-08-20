@@ -106,12 +106,17 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "${GHCR_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
 
-      - name: Build backend image outside the VPS
+      - name: Build backend image with BuildKit cache outside the VPS
         env:
           IMAGE: ${{ steps.image.outputs.name }}
         run: |
           set -Eeuo pipefail
-          docker build --tag "${IMAGE}" ./conduit-backend
+          docker buildx build \
+            --cache-from "type=gha,scope=conduit-backend" \
+            --cache-to "type=gha,mode=max,scope=conduit-backend" \
+            --tag "${IMAGE}" \
+            --load \
+            ./conduit-backend
 
       - name: Publish backend image and record immutable reference
         if: github.event_name == 'push'
@@ -163,7 +168,7 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "${GHCR_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
 
-      - name: Build frontend image outside the VPS
+      - name: Build frontend image with BuildKit cache outside the VPS
         env:
           FRONTEND_API_URL: ${{ secrets.FRONTEND_API_URL }}
           IMAGE: ${{ steps.image.outputs.name }}
@@ -182,9 +187,12 @@ jobs:
             }
           fi
 
-          docker build \
+          docker buildx build \
             --build-arg "API_URL=${API_URL}" \
+            --cache-from "type=gha,scope=conduit-frontend" \
+            --cache-to "type=gha,mode=max,scope=conduit-frontend" \
             --tag "${IMAGE}" \
+            --load \
             ./conduit-frontend
 
       - name: Publish frontend image and record immutable reference

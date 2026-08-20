@@ -170,6 +170,7 @@ The GitHub Actions pipeline separates CI from deployment:
 2. CI checks the repository structure, checks out the pinned private
    submodules, builds the frontend, and builds both application images on
    GitHub-hosted runners.
+
 3. On a push to `feature/conduit-deployment`, the images are published to GHCR
    with the source commit as tag and an immutable digest.
 4. The reusable deployment workflow validates the image references and connects
@@ -177,6 +178,12 @@ The GitHub Actions pipeline separates CI from deployment:
 5. The VPS receives `docker-compose.prod.yaml`, pulls the approved images, and
    starts the stack with `docker compose -f docker-compose.prod.yaml up -d --no-build`.
    It is then checked for readiness and running image identity.
+
+The application image builds use separate BuildKit cache scopes for the
+frontend and backend. A cache hit reuses unchanged dependency and build layers;
+a cache miss still performs a normal build. Caches are disposable and may be
+evicted by GitHub, so they do not affect image contents, tags, digests, or
+deployment correctness.
 
 Local development uses `docker-compose.yaml`, which builds the application
 images from the checked-out submodules. Deployment uses
