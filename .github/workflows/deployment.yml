@@ -213,10 +213,10 @@ jobs:
           set -Eeuo pipefail
 
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
-          REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
+          REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.prod.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
 
           scp -F "${SSH_DIRECTORY}/config" -B \
-            docker-compose.yaml \
+            docker-compose.prod.yaml \
             "conduit-staging:${REMOTE_TEMP_FILE}"
 
           ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
@@ -231,7 +231,7 @@ jobs:
              grep -Fqx -- \"\${FRONTEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Frontend image does not match the approved digest.' >&2; exit 1; }
              grep -Fqx -- \"\${BACKEND_IMAGE}\" <<< \"\${RESOLVED_IMAGES}\" || { echo 'Backend image does not match the approved digest.' >&2; exit 1; }
              docker compose -f '${REMOTE_TEMP_FILE}' pull database
-             mv -f -- '${REMOTE_TEMP_FILE}' '${DEPLOY_PATH}/docker-compose.yaml'"
+             mv -f -- '${REMOTE_TEMP_FILE}' '${DEPLOY_PATH}/docker-compose.prod.yaml'"
 
       - name: Deploy approved Compose stack
         env:
@@ -248,12 +248,12 @@ jobs:
              cd '${DEPLOY_PATH}'
              export FRONTEND_IMAGE='${FRONTEND_IMAGE}'
              export BACKEND_IMAGE='${BACKEND_IMAGE}'
-             docker compose up -d --no-build --remove-orphans
+             docker compose -f docker-compose.prod.yaml up -d --no-build --remove-orphans
 
              for ATTEMPT in \$(seq 1 30); do
-               FRONTEND_ID=\"\$(docker compose ps -q frontend)\"
-               BACKEND_ID=\"\$(docker compose ps -q backend)\"
-               DATABASE_ID=\"\$(docker compose ps -q database)\"
+               FRONTEND_ID=\"\$(docker compose -f docker-compose.prod.yaml ps -q frontend)\"
+               BACKEND_ID=\"\$(docker compose -f docker-compose.prod.yaml ps -q backend)\"
+               DATABASE_ID=\"\$(docker compose -f docker-compose.prod.yaml ps -q database)\"
 
                if [[ -n \"\${FRONTEND_ID}\" && -n \"\${BACKEND_ID}\" && -n \"\${DATABASE_ID}\" ]] &&
                   [[ \"\$(docker inspect -f '{{.State.Running}}' \"\${FRONTEND_ID}\")\" == true ]] &&
@@ -266,7 +266,7 @@ jobs:
 
                if [[ \"\${ATTEMPT}\" == 30 ]]; then
                  echo 'Services did not reach the expected runtime state within 60 seconds.' >&2
-                 docker compose ps >&2
+                 docker compose -f docker-compose.prod.yaml ps >&2
                  exit 1
                fi
                sleep 2
@@ -291,7 +291,7 @@ jobs:
 
           SSH_DIRECTORY="${RUNNER_TEMP}/conduit-deployment-ssh"
           test -f "${SSH_DIRECTORY}/config" || exit 0
-          REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
+          REMOTE_TEMP_FILE="${DEPLOY_PATH}/.docker-compose.prod.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.tmp"
           ssh -F "${SSH_DIRECTORY}/config" conduit-staging \
             "rm -f -- '${REMOTE_TEMP_FILE}'"
 

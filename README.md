@@ -174,9 +174,14 @@ The GitHub Actions pipeline separates CI from deployment:
    with the source commit as tag and an immutable digest.
 4. The reusable deployment workflow validates the image references and connects
    to the staging VPS through SSH.
-5. The VPS receives the Compose manifest, pulls the approved images, starts the
-   stack with `docker compose up -d --no-build`, and is checked for readiness
-   and running image identity.
+5. The VPS receives `docker-compose.prod.yaml`, pulls the approved images, and
+   starts the stack with `docker compose -f docker-compose.prod.yaml up -d --no-build`.
+   It is then checked for readiness and running image identity.
+
+Local development uses `docker-compose.yaml`, which builds the application
+images from the checked-out submodules. Deployment uses
+`docker-compose.prod.yaml`, which contains runtime image references only and
+does not build application images on the VPS.
 
 `main` runs CI but does not trigger this staging deployment. A production
 environment would require a separate environment, approval model, and secret
@@ -236,16 +241,15 @@ The workflow writes the private key, known-hosts file, and SSH configuration
 only to a restricted directory below `${RUNNER_TEMP}`. Checkout credentials
 are not persisted because every checkout uses `persist-credentials: false`.
 
-The Compose manifest is first copied to a uniquely named temporary file below
-`DEPLOY_PATH`. It is validated against the approved image digests and moved to
-`docker-compose.yaml` only after validation succeeds. Temporary remote files
-and runner-side SSH material are removed in cleanup steps that also run after
-failures.
+The production manifest is first copied to a uniquely named temporary file
+below `DEPLOY_PATH`. It is validated against the approved image digests and
+moved to `docker-compose.prod.yaml` only after validation succeeds. Temporary
+remote files and runner-side SSH material are removed in cleanup steps that
+also run after failures.
 
-The deployment does not build application images on the VPS. The VPS pulls the
-approved GHCR images instead. The current packages are publicly pullable, so
-the VPS does not log in to GHCR; changing package visibility requires a
-separate registry-authentication design.
+The VPS pulls the approved GHCR images instead. The current packages are
+publicly pullable, so the VPS does not log in to GHCR; changing package
+visibility requires a separate registry-authentication design.
 
 ## Security
 
