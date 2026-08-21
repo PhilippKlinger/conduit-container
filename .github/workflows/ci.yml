@@ -1,0 +1,229 @@
+name: CI
+
+# This learning project intentionally deploys the dedicated feature branch to
+# protected staging so the complete SSH and runtime flow can be verified.
+# Pull requests and main run CI only; production promotion is out of scope.
+on:
+  push:
+    branches:
+      - "feature/**"
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-validation:
+    name: Validate repository structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Verify required project files
+        run: |
+          set -Eeuo pipefail
+
+          test -f docker-compose.yaml
+          test -f conduit-frontend/Dockerfile
+          test -f conduit-frontend/.dockerignore
+          test -f conduit-frontend/package-lock.json
+          test -f conduit-backend/Dockerfile
+          test -f conduit-backend/.dockerignore
+          test -f conduit-backend/requirements.txt
+
+  frontend-build:
+    name: Build Angular frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: repository-validation
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: conduit-frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        working-directory: conduit-frontend
+        run: npm ci
+
+      - name: Build frontend for production
+        working-directory: conduit-frontend
+        run: npm run build -- --configuration production
+
+  # Frontend and backend image builds are independent and can run in parallel.
+  backend-image-build:
+    name: Build backend image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: repository-validation
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Prepare backend image name
+        id: image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "name=ghcr.io/${OWNER_LOWER}/conduit-backend:${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GHCR_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build backend image with BuildKit cache outside the VPS
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+          docker buildx build \
+            --cache-from "type=gha,scope=conduit-backend" \
+            --cache-to "type=gha,mode=max,scope=conduit-backend" \
+            --tag "${IMAGE}" \
+            --load \
+            ./conduit-backend
+
+      - name: Publish backend image and record immutable reference
+        if: github.event_name == 'push'
+        id: publish
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+
+          PUSH_OUTPUT="$(docker push "${IMAGE}")"
+          echo "${PUSH_OUTPUT}"
+          DIGEST="$(awk '/digest: sha256:/ {print $3}' <<< "${PUSH_OUTPUT}" | tail -n 1)"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=${IMAGE}@${DIGEST}" >> "${GITHUB_OUTPUT}"
+
+  frontend-image-build:
+    name: Build frontend image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - repository-validation
+      - frontend-build
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+
+    steps:
+      - name: Check out repository and submodules
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+          persist-credentials: false
+
+      - name: Prepare frontend image name
+        id: image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          OWNER_LOWER="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "name=ghcr.io/${OWNER_LOWER}/conduit-frontend:${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GHCR_TOKEN}" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build frontend image with BuildKit cache outside the VPS
+        env:
+          FRONTEND_API_URL: ${{ secrets.FRONTEND_API_URL }}
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+
+          API_URL="${FRONTEND_API_URL:-http://localhost:8000/api}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            [[ -n "${FRONTEND_API_URL}" ]] || {
+              echo "::error::Required repository secret FRONTEND_API_URL is missing or empty."
+              exit 1
+            }
+            [[ "${FRONTEND_API_URL}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?/api/?$ ]] || {
+              echo "::error::FRONTEND_API_URL must be an HTTP(S) URL ending in /api."
+              exit 1
+            }
+          fi
+
+          docker buildx build \
+            --build-arg "API_URL=${API_URL}" \
+            --cache-from "type=gha,scope=conduit-frontend" \
+            --cache-to "type=gha,mode=max,scope=conduit-frontend" \
+            --tag "${IMAGE}" \
+            --load \
+            ./conduit-frontend
+
+      - name: Publish frontend image and record immutable reference
+        if: github.event_name == 'push'
+        id: publish
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+
+          PUSH_OUTPUT="$(docker push "${IMAGE}")"
+          echo "${PUSH_OUTPUT}"
+          DIGEST="$(awk '/digest: sha256:/ {print $3}' <<< "${PUSH_OUTPUT}" | tail -n 1)"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "image=${IMAGE}@${DIGEST}" >> "${GITHUB_OUTPUT}"
+
+  deployment-validation:
+    name: Run deployment validation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/conduit-deployment'
+    needs:
+      - repository-validation
+      - frontend-build
+      - backend-image-build
+      - frontend-image-build
+    uses: ./.github/workflows/deployment.yml
+    with:
+      source_sha: ${{ github.sha }}
+      frontend_image: ${{ needs.frontend-image-build.outputs.image }}
+      backend_image: ${{ needs.backend-image-build.outputs.image }}
+    # The called workflow uses the staging environment for deployment secrets.
+    secrets: inherit

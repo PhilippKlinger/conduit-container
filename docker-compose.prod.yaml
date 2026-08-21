@@ -2,16 +2,7 @@ name: conduit
 
 services:
   frontend:
-    image: ${FRONTEND_IMAGE:-conduit-frontend:local}
-    build:
-      context: ./conduit-frontend
-      dockerfile: Dockerfile
-      args:
-        NODE_IMAGE: ${NODE_IMAGE:-node:20-alpine}
-        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.28.3-alpine}
-        # Angular bakes this into the bundle, so it must be an address the
-        # browser can reach - never the internal service name.
-        API_URL: ${API_URL:-http://localhost:8000/api}
+    image: ${FRONTEND_IMAGE:?Set FRONTEND_IMAGE in the deployment workflow}
     ports:
       - "${FRONTEND_PORT:-8282}:80"
     depends_on:
@@ -21,12 +12,7 @@ services:
       - conduit
 
   backend:
-    image: ${BACKEND_IMAGE:-conduit-backend:local}
-    build:
-      context: ./conduit-backend
-      dockerfile: Dockerfile
-      args:
-        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.6-slim}
+    image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE in the deployment workflow}
     env_file:
       - .env.backend
     ports:
