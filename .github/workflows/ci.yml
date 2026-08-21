@@ -1,5 +1,8 @@
 name: CI
 
+# This learning project intentionally deploys the dedicated feature branch to
+# protected staging so the complete SSH and runtime flow can be verified.
+# Pull requests and main run CI only; production promotion is out of scope.
 on:
   push:
     branches:

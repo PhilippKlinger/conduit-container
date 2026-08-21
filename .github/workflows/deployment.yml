@@ -1,5 +1,9 @@
 name: Deployment
 
+# This reusable workflow is the staging deployment path for the learning
+# project. ci.yml calls it only for pushes to feature/conduit-deployment.
+# Production deployment would require a separate protected environment and
+# approval model and is intentionally outside the current project scope.
 on:
   workflow_call:
     inputs:
@@ -28,7 +32,7 @@ jobs:
     environment: staging
 
     steps:
-      # The deployment workflow needs only this repository's Compose manifest.
+      # The workflow needs only this repository's staging runtime manifest.
       - name: Check out deployment manifest
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

@@ -170,6 +170,14 @@ docker compose up -d --force-recreate backend
 
 ## CI/CD deployment
 
+> [!NOTE]
+> This learning project intentionally uses pushes to
+> `feature/conduit-deployment` as a protected staging deployment. This makes
+> the complete build, GHCR, SSH, and runtime-verification chain observable for
+> the academy project. It is not a production deployment model: pull requests
+> and `main` run CI only, while production promotion would require a separate
+> environment, approval model, and secrets.
+
 The pipeline separates CI from deployment:
 
 1. Pushes to `feature/**`, pushes to `main`, and pull requests targeting `main`
