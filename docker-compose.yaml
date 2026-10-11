@@ -2,6 +2,7 @@ name: conduit
 
 services:
   frontend:
+    image: ${FRONTEND_IMAGE:-conduit-frontend:local}
     build:
       context: ./conduit-frontend
       dockerfile: Dockerfile
@@ -20,6 +21,7 @@ services:
       - conduit
 
   backend:
+    image: ${BACKEND_IMAGE:-conduit-backend:local}
     build:
       context: ./conduit-backend
       dockerfile: Dockerfile
