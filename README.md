@@ -220,7 +220,6 @@ Create these repository secrets:
 
 | Secret | Scope | Purpose |
 | --- | --- | --- |
-| `SUBMODULE_TOKEN` | Repository | Fine-grained token with `Contents: Read-only` access to the parent, frontend, and backend repositories |
 | `FRONTEND_API_URL` | Repository | Browser-reachable API URL used when the frontend image is built |
 
 Create a GitHub Environment named `staging` and add these environment secrets:
